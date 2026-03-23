@@ -1,7 +1,8 @@
 HIS.est <- function(y, beta, k) {
 	N <- ncol(y)
 	T <- nrow(y)
-	# VECM(1), known beta
+	b.orth <- Null(beta)
+	# VECM, known beta
 	z <- y %*% beta
 	if (ncol(beta) == 1) lz <- c(NA, z[-nrow(z)]) else {
 		lz <- rbind(NA, z[-nrow(z),]) }
@@ -74,15 +75,43 @@ HIS.est <- function(y, beta, k) {
 	}
 
 	# information share
-	xi <- solve(t(a.hat.orth) %*% (diag(N) - Gamma.hat) %*% b.orth) %*% t(a.hat.orth)
-	F <- t(chol(Omega.hat))
-	IS.num <- xi %*% F
-	IS.denom <- xi %*% Omega.hat %*% t(xi)
+	xi.hat <- solve(t(a.hat.orth) %*% (diag(N) - Gamma.hat) %*% b.orth) %*% t(a.hat.orth)
+	F.hat <- t(chol(Omega.hat))
+	IS.num <- xi.hat %*% F.hat
+	IS.denom <- xi.hat %*% Omega.hat %*% t(xi.hat)
 	IS <- IS.num^2 / as.vector(IS.denom)
 	names(IS) <- paste("y", 1:N, sep="")
 
-	theta <- xi %*% F
-	Z <- t(F) %*% (((xi %*% Omega.hat %*% t(xi)) %x% kappa)/T) %*% F
+	n_vech <- N*(N+1)/2
+	Vmat <- t( apply(u.hat, 1, function(e){
+		M <- tcrossprod(e) - Omega.hat
+		M[ lower.tri(M, diag=TRUE) ]
+		}) )           # T x n_vech
+	S.Omega <- crossprod(Vmat) / T   # n_vech x n_vech
+
+	# define f_chol: vech(Omega) -> vec( L )  where L = t(chol(Omega))
+	f_chol <- function(v){
+		# recover N from length(v), 
+		# solve \[ \ell = \text{length}(v) \;=\;\tfrac12\,N(N+1)\,. \]
+		N0 <- (-1 + sqrt(1 + 8*length(v))) / 2
+		Om <- matrix(0, N0, N0)
+		Om[ lower.tri(Om, diag=TRUE) ] <- v
+		Om <- Om + t(Om) - diag(diag(Om))
+		L  <- t(chol(Om))     
+		as.numeric(L)          # stacks columns into a length-N0^2 vector
+	}
+
+	v0 <- Omega.hat[ lower.tri(Omega.hat, diag=TRUE) ]
+	H.hat <- jacobian(f_chol, v0)
+	S.F <- H.hat %*% S.Omega %*% t(H.hat)
+
+	A <- t(F.hat)
+	B <- diag(N) %x% xi.hat
+	S.xi <- ((xi.hat %*% Omega.hat %*% t(xi.hat)) %x% kappa)
+	# symmetrically-distributed errors, cross-terms zero
+	Z <- (A %*% S.xi %*% t(A) + B %*% S.F %*% t(B)) / T
+
+	theta <- xi.hat %*% F.hat
 	denom <- sum(theta^2)
 
 	# Jacobian
@@ -98,9 +127,10 @@ HIS.est <- function(y, beta, k) {
 		}
 
 	# covariance matrix
-	S.cov <- t(Jg) %*% Z %*% Jg
+	S.IS <- t(Jg) %*% Z %*% Jg
 
-	results <- list(IS=IS, vcov=S.cov, xi=xi, Omega.hat=Omega.hat, kappa=kappa)
+	results <- list(IS=IS, S.IS=S.IS, xi.hat=xi.hat, S.xi=S.xi/T, 
+			Omega.hat=Omega.hat, S.Omega=S.Omega/T, F.hat=F.hat, S.F=S.F/T)
 	return(results)
 	}
 
